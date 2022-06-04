@@ -1,0 +1,67 @@
+
+package: airline
+
+type: passenger {
+    passengerName string
+}
+
+type: airport {            ; define a type for airport
+    name string
+    airportCode string
+}
+
+type: gate {
+    gateNumber string
+}
+
+type: flight {
+    flightNumber string
+}
+
+type: boardingPass {
+    passengerName string
+    airportCode string
+    flightNumber string
+    gateNumber string
+}
+
+function: welcomeAboard {
+    > passenger
+    > airport
+    > gate
+    > flight
+    > boardingPass
+
+    + boardingPass
+
+    loop: 0 {            ; loop of 0 is nothing - both nodes should be removed
+        + airline
+    }
+
+    loop: 4 {            ; loop of 4 nothings - node should be removed
+    }
+
+    loop: 1 {            ; loop of 1 isn't really a loop - loop node should be collapsed
+        + boardingPass
+    }
+
+    {                    ; node should be removed
+    }
+
+    loop: 2 {            ; loop node should be collapsed to 24 ( 2 * 3 * 4 )
+        loop: 3 {
+            loop: 4 {
+            }
+        }
+    }
+}
+
+function: makeBoardingPass {
+    > passenger
+    > airport
+    > gate
+    > flight
+    > boardingPass
+
+    + boardingPass
+}
