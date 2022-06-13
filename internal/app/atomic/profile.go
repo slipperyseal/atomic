@@ -36,6 +36,7 @@ type param struct {
 type profile struct {
 	instructions []instruction
 	registers    []register
+	targetos     string
 }
 
 func (i instruction) isSupported() bool {
@@ -75,7 +76,6 @@ func loadProfile(o options, filename string) profile {
 
 		lnum++
 		line := strings.Split(strings.TrimSpace(string(bytes)), "#")[0] // remove comments
-
 		if len(line) == 0 {
 			continue
 		}
@@ -93,7 +93,6 @@ func loadProfile(o options, filename string) profile {
 		}
 
 		ins, template := parseInstruction(line, lnum)
-
 		if !ins.isSupported() {
 			continue
 		}
@@ -117,6 +116,7 @@ func loadProfile(o options, filename string) profile {
 	return profile{
 		instructions: instructions,
 		registers:    registers,
+		targetos:     o.targetos,
 	}
 }
 
@@ -225,7 +225,7 @@ func (p *profile) findNoargs(name string) uint32 {
 			return ins.bits
 		}
 	}
-	shenanigans("Couldnt find instruction %s\n", name)
+	shenanigans("Couldn't find instruction %s\n", name)
 	return 0
 }
 
@@ -235,7 +235,7 @@ func (p *profile) find(name string, paramSet string) instruction {
 			return ins
 		}
 	}
-	shenanigans("Couldnt find instruction %s with %s\n", name, paramSet)
+	shenanigans("Couldn't find instruction %s with %s\n", name, paramSet)
 	return instruction{}
 }
 

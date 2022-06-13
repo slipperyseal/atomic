@@ -4,6 +4,6 @@
 
 rm airline.o
 go run cmd/atomic/main.go --verbose example/airline.atomic
-gcc link/atomic.c airline.o -o airline
 objdump -d airline.o
+gcc link/atomic.c airline.o -o airline
 ./airline

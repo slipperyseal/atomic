@@ -24,7 +24,6 @@ type primative struct {
 }
 
 type reference struct {
-	pack      string
 	structs   map[string]*structNode
 	functions map[string]*functionNode
 }
@@ -165,15 +164,18 @@ func (r reference) populate(a *ast) {
 				shenanigans("Duplicate function definition: %s", f.name)
 			}
 			r.functions[f.name] = f
-		case *packageNode:
-			p := n.node.(*packageNode)
-			if r.pack != "" {
-				shenanigans("Package already defined: %s", r.pack)
-			}
-			r.pack = p.name
 		}
 	}
-	if r.pack == "" {
-		shenanigans("Package not defined")
+}
+
+func collectFunctions(rootAst *ast) []ast {
+	// collect functions for each file
+	functions := make([]ast, 0, 10)
+	for _, a := range rootAst.sub {
+		switch a.node.(type) {
+		case *functionNode:
+			functions = append(functions, a)
+		}
 	}
+	return functions
 }

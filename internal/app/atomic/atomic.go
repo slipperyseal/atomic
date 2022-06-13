@@ -24,7 +24,7 @@ func Atomic() {
 	a.StringArg('d', "outputdir", ".", false, "output directory.", nil, &o.outputdir)
 	a.StringArg('t', "targetos", runtime.GOOS, false, "target OS.", []string{"darwin", "linux"}, &o.targetos)
 	a.StringArg('p', "profile", "profile/arm64.profile", false, "cpu profile file.", nil, &o.profile)
-	a.IntArg('c', "concurrency", "target concurrency cpu count.", runtime.NumCPU(), &o.concurrency)
+	a.IntArg('c', "concurrency", "target concurrency thread count.", runtime.NumCPU(), &o.concurrency)
 	tail := a.Process(os.Args, true, "atomic-source-files")
 
 	for _, t := range tail {
@@ -38,84 +38,101 @@ func Atomic() {
 }
 
 func compileFiles(profile profile, files []string, o options) {
+	units := make([]unit, 0, len(files))
+	unitChannel := make(chan unit, len(files))
+
+	for fi, file := range files {
+		go parseFile(o, file, unitChannel)
+
+		for fi-len(units) > o.concurrency {
+			units = append(units, <-unitChannel)
+		}
+	}
+	for len(units) < len(files) {
+		units = append(units, <-unitChannel)
+	}
+
+	// create reference structure from all files
 	r := reference{
 		structs:   map[string]*structNode{},
 		functions: map[string]*functionNode{},
 	}
-
-	// parse all files and combine into reference
-	rootAsts := make([]ast, 0, len(files))
-	astChannel := make(chan ast, len(files))
-
-	for fi, file := range files {
-		go parseFile(o, file, astChannel)
-
-		for fi-len(rootAsts) > o.concurrency { // if backlog greater than concurrency wait on channel
-			rootAst := <-astChannel
-			rootAsts = append(rootAsts, rootAst)
-			r.populate(&rootAst)
-		}
-	}
-	for len(rootAsts) < len(files) {
-		rootAst := <-astChannel
-		rootAsts = append(rootAsts, rootAst)
-		r.populate(&rootAst)
+	for _, u := range units {
+		r.populate(&u.ast)
 	}
 
 	// compile each file
-	for i, rootAst := range rootAsts {
-		file := files[i]
-
+	objectChannel := make(chan string, len(units))
+	for _, u := range units {
 		// collect functions for each file
-		functions := make([]ast, 0, 10)
-		for _, a := range rootAst.sub {
-			switch a.node.(type) {
-			case *functionNode:
-				functions = append(functions, a)
-			}
-		}
-
+		functions := collectFunctions(&u.ast)
 		asms := make([]asm, 0, len(functions))
 		asmChannel := make(chan asm, len(asms))
 
 		for fi, fa := range functions {
-			go compileFunction(fa, &profile, asmChannel, &r)
+			go compileFunction(fa, &profile, &r, asmChannel)
 
-			for fi-len(asms) > o.concurrency { // if backlog greater than concurrency wait on channel
+			for fi-len(asms) > o.concurrency {
 				asms = append(asms, <-asmChannel)
 			}
 		}
 		for len(asms) < len(functions) {
 			asms = append(asms, <-asmChannel)
 		}
-
+		// sort reordered results by function name
 		sort.Slice(asms, func(i, j int) bool {
 			return asms[i].symbols[0].value < asms[j].symbols[0].value
 		})
 
-		filename := objectFileName(o.outputdir, file)
+		if o.verbose {
+			for _, a := range asms {
+				fmt.Printf("ASM %x %s\n", a.getHash(), a.symbols[0].value)
+			}
+		}
 
-		switch o.targetos {
-		case "darwin":
-			writeObjectFileMach(filename, asms)
-		case "linux":
-			writeObjectFileElf(filename, asms)
-		default:
-			shenanigans("Object format not supported for %s", o.targetos)
+		go writeObject(asms, objectFileName(o.outputdir, u.filename), o.targetos, objectChannel)
+	}
+	for range units {
+		<-objectChannel
+	}
+
+	if o.verbose {
+		// sort reordered results by file name
+		sort.Slice(units, func(i, j int) bool {
+			return units[i].filename < units[j].filename
+		})
+
+		for _, u := range units {
+			fmt.Printf("AST %x %s\n", u.ast.getHash(), u.filename)
 		}
 	}
 }
 
-func compileFunction(fa ast, profile *profile, asmChannel chan asm, r *reference) {
+func writeObject(asms []asm, filename string, targetos string, objectChannel chan string) {
+	switch targetos {
+	case "darwin":
+		writeObjectFileMach(filename, asms)
+	case "linux":
+		writeObjectFileElf(filename, asms)
+	default:
+		shenanigans("Object format not supported for %s", targetos)
+	}
+
+	objectChannel <- filename
+}
+
+func compileFunction(fa ast, profile *profile, r *reference, asmChannel chan asm) {
 	asm := asm{
 		instructions: make([]uint32, 0, 128),
 		symbols:      make([]symbol, 0, 16),
+		underscore:   profile.targetos == "darwin",
 	}
 
 	dc := fa.emit(newFrame(r), profile, &asm)
 	if dc != nil {
 		dc()
 	}
+	asm.align()
 
 	asmChannel <- asm
 }

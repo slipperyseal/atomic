@@ -8,7 +8,7 @@ int main(int argc, char *argv[]) {
     char* airport[] = { "Adelaide", "ADL"};
     char* gate[] = { "Gate 1" };
     char* flight[] = { "AA001" };
-    char* boardingPass[] = {0,0,0,0};
+    char* boardingPass[4];
 
     makeBoardingPass(&passenger, &airport, &gate, &flight, &boardingPass);
 

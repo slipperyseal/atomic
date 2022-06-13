@@ -58,10 +58,11 @@ type functionNode struct {
 
 func (n *functionNode) resolve(a *ast) func(f *frame, p *profile, as *asm) func() {
 	return func(f *frame, p *profile, as *asm) func() {
-		as.addSymbol("_"+n.name, true)
+		as.addSymbol(n.name, true)
+
 		return func() {
 			as.addSymbol("exit_"+n.name, false)
-			as.addOpCode(p.findReg("ret", p.findLinkRegister().index))
+			as.emit(p.findReg("ret", p.findLinkRegister().index))
 		}
 	}
 }
@@ -128,8 +129,8 @@ func (n *populateNode) resolve(a *ast) func(f *frame, p *profile, as *asm) func(
 						if sourceField.name == field.name {
 							sourceRegister, ok := f.registerForValue(p, sourceStruct.name)
 							if ok {
-								as.addOpCode(p.find("ldr", "int").set("int", sourceField.offset/8, sourceRegister.index, tmp.index))
-								as.addOpCode(p.find("str", "int").set("int", field.offset/8, targetRegister.index, tmp.index))
+								as.emit(p.find("ldr", "int").set("int", sourceField.offset/8, sourceRegister.index, tmp.index))
+								as.emit(p.find("str", "int").set("int", field.offset/8, targetRegister.index, tmp.index))
 							}
 						}
 					}
@@ -149,7 +150,7 @@ func (n *inputNode) resolve(a *ast) func(f *frame, p *profile, as *asm) func() {
 	return func(f *frame, p *profile, as *asm) func() {
 		f.pushParameter(p, n.name)
 		// move reg to self as non breaky way to see it doing something
-		//as.addOpCode(p.find("mov", "dn").set("dn", r.index, r.index))
+		//as.emit(p.find("mov", "dn").set("dn", r.index, r.index))
 		return func() {
 			f.releaseValue(n.name)
 		}

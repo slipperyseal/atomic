@@ -1,6 +1,7 @@
 package atomic
 
 import (
+	"crypto/sha256"
 	"io"
 )
 
@@ -8,6 +9,7 @@ import (
 type asm struct {
 	instructions []uint32
 	symbols      []symbol
+	underscore   bool // exported symbols are underscored
 }
 
 type symbol struct {
@@ -17,6 +19,10 @@ type symbol struct {
 }
 
 func (a *asm) addSymbol(value string, export bool) {
+	if export && a.underscore {
+		value = "_" + value
+	}
+
 	off := len(a.instructions) * 4
 	if len(a.symbols) > 0 && a.symbols[len(a.symbols)-1].offset == off {
 		return
@@ -28,13 +34,13 @@ func (a *asm) addSymbol(value string, export bool) {
 	})
 }
 
-func (a *asm) addOpCode(i uint32) {
+func (a *asm) emit(i uint32) {
 	a.instructions = append(a.instructions, i)
 }
 
 func (a *asm) align() {
 	for len(a.instructions)&0x3 != 0 {
-		a.addOpCode(0)
+		a.emit(0)
 	}
 }
 
@@ -45,8 +51,24 @@ func (a *asm) writeAsm(w io.Writer) {
 		b[1] = byte(v >> 8)
 		b[2] = byte(v >> 16)
 		b[3] = byte(v >> 24)
-		w.Write(b)
+		_, err := w.Write(b)
+		if err != nil {
+			shenanigans("Write failure on asm block.")
+		}
 	}
+}
+
+var boolToByteArray = map[bool][]byte{false: {0}, true: {1}}
+
+func (a *asm) getHash() []byte {
+	h := sha256.New()
+	a.writeAsm(h)
+	for _, s := range a.symbols {
+		h.Write([]byte(s.value))
+		h.Write([]byte{byte(s.offset), byte(s.offset >> 8), byte(s.offset >> 16), byte(s.offset >> 24)})
+		h.Write(boolToByteArray[s.export])
+	}
+	return h.Sum(nil)
 }
 
 func (a *asm) size() int {

@@ -1,8 +1,9 @@
 package atomic
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/binary"
+	"io"
 	"log"
 	"os"
 )
@@ -107,7 +108,10 @@ const SIZEOF_LCDYSYMTAB = 80
 const SIZEOF_MACHSYMBOL = 16
 
 var falseTrue = []bool{false, true}
-var exportSymbolTypes = map[bool]uint8{false: 0xe, true: 0xf}
+var exportSymbolTypesMach = map[bool]uint8{
+	false: 0xe,
+	true:  0xf,
+}
 
 func writeObjectFileMach(filename string, asms []asm) {
 	file, err := os.Create(filename)
@@ -116,13 +120,13 @@ func writeObjectFileMach(filename string, asms []asm) {
 		log.Fatal(err)
 	}
 
+	buffer := bufio.NewWriter(file)
+
 	// align assembler and calculate combined lengths
 	asmSize := 0
 	localSymbols := 0
 	exportedSymbols := 0
-	for i, _ := range asms {
-		a := &asms[i]
-		a.align()
+	for _, a := range asms {
 		asmSize += a.size()
 		loc, exp := a.symbolCounts()
 		localSymbols += loc
@@ -133,11 +137,10 @@ func writeObjectFileMach(filename string, asms []asm) {
 	asmOff := SIZEOF_MACH64HEADER + loadSize
 	symOff := asmOff + asmSize
 
-	stringTable, stringIndexes := buildStringTable(asms)
+	stringTable, stringIndexes := buildAsmStringTable(asms)
 
 	stringOff := symOff + (SIZEOF_MACHSYMBOL * len(stringIndexes))
 
-	var buffer bytes.Buffer
 	h := mach64header{
 		magicNumber:          0xfeedfacf,
 		cpuType:              0x0100000c,
@@ -148,7 +151,7 @@ func writeObjectFileMach(filename string, asms []asm) {
 		flags:                0,
 		reserved:             0,
 	}
-	binary.Write(&buffer, binary.LittleEndian, h)
+	writeStruct(buffer, h)
 
 	lc64 := lcSegment64{
 		command:             0x00000019,
@@ -163,7 +166,7 @@ func writeObjectFileMach(filename string, asms []asm) {
 		numberOfSections:    1,
 		flags:               0,
 	}
-	binary.Write(&buffer, binary.LittleEndian, lc64)
+	writeStruct(buffer, lc64)
 
 	text := section64{
 		sectionName:         fixedString16("__text"),
@@ -179,7 +182,7 @@ func writeObjectFileMach(filename string, asms []asm) {
 		reserved2:           0,
 		reserved3:           0,
 	}
-	binary.Write(&buffer, binary.LittleEndian, text)
+	writeStruct(buffer, text)
 
 	build := lsBuildVersion{
 		command:     0x32,
@@ -189,7 +192,7 @@ func writeObjectFileMach(filename string, asms []asm) {
 		sdk:         0,
 		ntools:      0,
 	}
-	binary.Write(&buffer, binary.LittleEndian, build)
+	writeStruct(buffer, build)
 
 	symTab := lcSymTab{
 		command:           0x00000002,
@@ -199,7 +202,7 @@ func writeObjectFileMach(filename string, asms []asm) {
 		stringTableOffset: uint32(stringOff),
 		stringTableSize:   uint32(len(stringTable)),
 	}
-	binary.Write(&buffer, binary.LittleEndian, symTab)
+	writeStruct(buffer, symTab)
 
 	dySymTab := lcDySymTab{
 		command:                 0x0000000b,
@@ -223,10 +226,10 @@ func writeObjectFileMach(filename string, asms []asm) {
 		locRelocTableOffset:     0,
 		locRelocTableEntries:    0,
 	}
-	binary.Write(&buffer, binary.LittleEndian, dySymTab)
+	writeStruct(buffer, dySymTab)
 
 	for _, a := range asms {
-		a.writeAsm(&buffer)
+		a.writeAsm(buffer)
 	}
 
 	// local symbols first, then exported
@@ -237,23 +240,34 @@ func writeObjectFileMach(filename string, asms []asm) {
 				if s.export == exp {
 					ms := machSymbol{
 						stringTableIndex: uint32(stringIndexes[s.value]),
-						symbolType:       exportSymbolTypes[s.export],
+						symbolType:       exportSymbolTypesMach[s.export],
 						sectionIndex:     1,
 						description:      0,
 						value:            uint64(asmOffset + s.offset),
 					}
-					binary.Write(&buffer, binary.LittleEndian, ms)
+					writeStruct(buffer, ms)
 				}
 			}
 			asmOffset += a.size()
 		}
 	}
 
-	buffer.Write(stringTable)
+	writeBytes(buffer, stringTable)
 
-	_, er := file.Write(buffer.Bytes())
-	if er != nil {
-		log.Fatal(err)
+	buffer.Flush()
+}
+
+func writeStruct(w io.Writer, data any) {
+	e := binary.Write(w, binary.LittleEndian, data)
+	if e != nil {
+		shenanigans("Write failure")
+	}
+}
+
+func writeBytes(w io.Writer, data []byte) {
+	_, e := w.Write(data)
+	if e != nil {
+		shenanigans("Write failure")
 	}
 }
 
@@ -265,22 +279,12 @@ func fixedString16(value string) [16]uint8 {
 	return slice
 }
 
-func buildStringTable(asms []asm) ([]byte, map[string]int) {
-	stringIndexes := make(map[string]int)
-	var stringTable bytes.Buffer
-
-	// no value at offset zero
-	stringTable.WriteByte(0)
-	// create the string table, with a map of string -> offset
+func buildAsmStringTable(asms []asm) ([]byte, map[string]int) {
+	var values []string
 	for _, a := range asms {
 		for _, s := range a.symbols {
-			stringIndexes[s.value] = stringTable.Len()
-			stringTable.WriteString(s.value)
-			stringTable.WriteByte(0)
+			values = append(values, s.value)
 		}
 	}
-	for stringTable.Len()&0x3 != 0 { // 32 bit pad
-		stringTable.WriteByte(0)
-	}
-	return stringTable.Bytes(), stringIndexes
+	return buildStringTable(values)
 }

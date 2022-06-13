@@ -3,9 +3,9 @@ package atomic
 import "C"
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"strconv"
@@ -17,10 +17,14 @@ type parser struct {
 	reader   *bufio.Reader
 	filename string
 	ast      ast
-	astHash  string
 	baseNode node
 	lineNum  int
 	verbose  bool
+}
+
+type unit struct {
+	filename string
+	ast      ast
 }
 
 // minimal viable recursive parser - please don't take it very seriously
@@ -117,7 +121,7 @@ func (p *parser) syntaxError(format string, a ...interface{}) {
 func (as *ast) printNode(w io.Writer, indent int) {
 	for _, a := range as.sub {
 		for i := 0; i <= indent; i++ {
-			fmt.Fprintf(w, "  ")
+			fmt.Fprint(w, "  ")
 		}
 		if a.node != nil {
 			fmt.Fprintf(w, "%s %+v\n", reflect.TypeOf(a.node), a.node)
@@ -126,19 +130,13 @@ func (as *ast) printNode(w io.Writer, indent int) {
 	}
 }
 
-func (p *parser) calculateAstHash() {
-	out := ioutil.Discard
-	if p.verbose {
-		out = os.Stdout
-	}
-	hashOut := newHashWriter(out)
-	bufOut := bufio.NewWriter(hashOut)
-	p.ast.printNode(bufOut, 0)
-	bufOut.Flush()
-	p.astHash = hashOut.result()
+func (as *ast) getHash() []byte {
+	h := sha256.New()
+	as.printNode(h, 0)
+	return h.Sum(nil)
 }
 
-func parseFile(o options, filename string, channel chan ast) {
+func parseFile(o options, filename string, channel chan unit) {
 	file, err := os.Open(filename)
 	if err != nil {
 		shenanigans("Failed to open file: %s %v", filename, err)
@@ -151,9 +149,14 @@ func parseFile(o options, filename string, channel chan ast) {
 		verbose:  o.verbose,
 	}
 	p.parseSource(&p.ast)
-	p.calculateAstHash()
-	if p.verbose {
-		fmt.Printf("ast hash: %s\n", p.astHash)
+
+	if o.verbose {
+		p.ast.printNode(os.Stdout, 0)
 	}
-	channel <- p.ast
+
+	u := unit{
+		filename: filename,
+		ast:      p.ast,
+	}
+	channel <- u
 }
